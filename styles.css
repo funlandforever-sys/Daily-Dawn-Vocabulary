@@ -493,3 +493,130 @@ input[type=range]{flex:1;accent-color:var(--green);}
   .pic-grid{grid-template-columns:1fr;}
   .memory-grid{grid-template-columns:repeat(2,1fr);}
 }
+
+/* ---------------------------- RESPONSIVE: TABLET / DESKTOP ---------------------------- */
+@media (min-width:700px){
+  #app{max-width:640px; padding:28px 24px 110px;}
+  .hero-title{font-size:40px;}
+  .nav-grid{grid-template-columns:repeat(3,1fr);}
+  .pic-grid{grid-template-columns:repeat(3,1fr);}
+  .memory-grid{grid-template-columns:repeat(4,1fr);}
+  .provider-grid{grid-template-columns:repeat(4,1fr);}
+}
+@media (min-width:1000px){
+  body{padding:0 0;}
+  #app{max-width:880px; padding:36px 32px 120px;}
+  .hero-title{font-size:46px;}
+  .nav-grid{grid-template-columns:repeat(3,1fr); gap:14px;}
+  .pic-grid{grid-template-columns:repeat(4,1fr);}
+  .memory-grid{grid-template-columns:repeat(6,1fr);}
+  .tab-row{gap:10px;}
+  .panel{padding:32px;}
+  .flash-wrap{max-width:520px; margin:0 auto;}
+}
+
+/* ---------------------------- LESSON CARD (home, with image) ---------------------------- */
+.lesson-card{
+  background:var(--card);
+  border:1px solid var(--card-border);
+  border-radius:var(--radius-lg);
+  overflow:hidden;
+  margin-bottom:18px;
+  box-shadow:var(--shadow-card);
+}
+.lesson-card-img{width:100%; height:200px; object-fit:cover; display:block; background:#eee6c9;}
+.lesson-card-body{padding:20px;}
+.date-pill{
+  display:inline-flex; align-items:center; gap:6px;
+  color:var(--muted); font-size:12.5px; font-weight:600; letter-spacing:.06em;
+  text-transform:uppercase; margin-bottom:10px;
+}
+.date-pill svg{width:14px;height:14px;}
+.lesson-headline{font-size:22px; font-weight:700; margin-bottom:10px; font-family:'Playfair Display',serif;}
+.lesson-snippet{color:var(--ink-soft); font-size:14.5px; line-height:1.55; margin-bottom:16px;}
+.btn-learn{
+  display:flex; align-items:center; justify-content:center; gap:8px;
+  width:100%; background:var(--green); color:#fff; border:none;
+  border-radius:var(--radius-pill); padding:15px; font-size:15px; font-weight:600; cursor:pointer;
+}
+.btn-learn:hover{background:var(--green-deep);}
+.btn-learn svg{width:18px;height:18px;}
+
+/* ---------------------------- OFFLINE CARDS ---------------------------- */
+.offline-card{
+  background:var(--card); border:1px solid var(--card-border); border-radius:var(--radius-lg);
+  padding:20px; margin-bottom:16px; box-shadow:var(--shadow-card);
+}
+.offline-card .date-pill{margin-bottom:12px;}
+.offline-card .lesson-headline{font-size:19px;}
+.offline-card-actions{display:flex; align-items:center; gap:14px; margin-top:14px; flex-wrap:wrap;}
+.saved-flag{display:inline-flex; align-items:center; gap:6px; color:var(--green); font-weight:700; font-size:13px;}
+.saved-flag svg{width:16px;height:16px;}
+.danger-link{
+  display:inline-flex; align-items:center; gap:6px; background:none; border:none;
+  color:var(--danger); font-weight:600; font-size:13.5px; cursor:pointer; margin-left:auto;
+}
+.danger-link svg{width:16px;height:16px;}
+
+/* ---------------------------- PROGRESS DOTS ---------------------------- */
+.progress-dots{display:flex; gap:4px; margin:10px 0 18px;}
+.progress-dots .dot-seg{flex:1; height:4px; border-radius:2px; background:var(--line);}
+.progress-dots .dot-seg.done{background:var(--green);}
+.progress-dots .dot-seg.now{background:var(--gold);}
+
+/* ---------------------------- RICH FLASHCARD (deck + lesson) ---------------------------- */
+.rich-card{
+  background:var(--card); border:1px solid var(--card-border); border-radius:var(--radius-lg);
+  padding:28px 24px; box-shadow:var(--shadow-card); text-align:center;
+}
+.rich-card .tag{margin-bottom:16px;}
+.rich-card .rc-word{font-family:'Playfair Display',serif; font-size:36px; font-weight:700;}
+.rich-card .rc-ipa{color:var(--muted); font-size:14px; letter-spacing:.04em; margin-top:6px;}
+.rich-card .rc-urdu{font-size:28px; color:var(--green); margin:18px 0 6px; direction:rtl; font-family:'Noto Nastaliq Urdu',serif; line-height:1.9;}
+.rc-section{text-align:left; margin-top:20px;}
+.rc-label{font-size:11.5px; font-weight:700; letter-spacing:.1em; color:var(--muted); text-transform:uppercase; margin-bottom:6px;}
+.rc-meaning{font-size:16px; color:var(--ink); margin-bottom:4px;}
+.rc-quote{font-style:italic; color:var(--ink-soft); font-size:14.5px; border-left:3px solid var(--tan); padding-left:12px;}
+.rc-example-en{font-size:15px; color:var(--ink); margin-bottom:6px;}
+.rc-example-ur{font-size:19px; color:var(--green); direction:rtl; font-family:'Noto Nastaliq Urdu',serif; margin-bottom:8px; line-height:1.8;}
+.rc-chips{display:flex; flex-wrap:wrap; gap:8px;}
+.rc-chip{background:#eef1e0; color:var(--ink-soft); padding:5px 12px; border-radius:var(--radius-pill); font-size:13px;}
+.mnemonic-box{
+  background:var(--tan); color:var(--tan-ink); border-radius:14px; padding:16px 18px;
+  font-size:14.5px; margin-top:18px; display:flex; gap:10px; align-items:flex-start; text-align:left;
+}
+.flash-controls-v2{display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:8px; margin-top:18px;}
+.flash-controls-v2 .btn{padding:12px 6px; font-size:13px;}
+.deck-head{display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;}
+
+/* ---------------------------- WORD STORY ---------------------------- */
+.story-hero{
+  background:var(--card); border:1px solid var(--card-border); border-radius:var(--radius-lg);
+  padding:24px; box-shadow:var(--shadow-card); margin-bottom:22px;
+}
+.story-hero-title{display:flex; align-items:center; gap:10px; font-size:24px; margin-bottom:8px;}
+.story-hero-title svg{width:22px; height:22px; color:var(--green);}
+.story-hero-stats{color:var(--muted); font-size:14px; margin-bottom:18px;}
+.chapter-card{
+  background:var(--card); border:1px solid var(--card-border); border-radius:var(--radius-lg);
+  padding:24px; box-shadow:var(--shadow-card); margin-bottom:18px;
+}
+.chapter-head{display:flex; align-items:flex-start; justify-content:space-between; gap:10px; margin-bottom:6px;}
+.chapter-meta{font-size:12px; font-weight:700; letter-spacing:.1em; color:var(--green); text-transform:uppercase;}
+.chapter-title{font-size:24px; margin:6px 0 14px;}
+.chapter-actions{display:flex; gap:8px; flex:none;}
+.icon-round{width:40px;height:40px;border-radius:50%;border:1px solid var(--card-border);background:#e8f1ea;color:var(--green);display:flex;align-items:center;justify-content:center;cursor:pointer;}
+.icon-round.danger{background:#fbeae5;color:var(--danger);}
+.story-wordbank{display:flex; flex-wrap:wrap; gap:10px; margin:20px 0;}
+.story-wordbank .chip{cursor:default;}
+.urdu-toggle{color:var(--green); font-weight:600; font-size:14.5px; cursor:pointer; background:none; border:none; padding:0;}
+.urdu-block{
+  background:var(--card); border:1px solid var(--card-border); border-radius:var(--radius-md);
+  padding:20px; margin-top:14px; direction:rtl; font-family:'Noto Nastaliq Urdu',serif; font-size:22px; line-height:2.1; color:var(--green);
+}
+
+/* ---------------------------- SETTINGS: extra keys ---------------------------- */
+.key-row{display:flex; gap:8px; margin-bottom:10px; align-items:center;}
+.key-row input{flex:1;}
+.key-row .icon-link{flex:none;}
+.persist-note{display:flex; gap:10px; align-items:flex-start; background:#e8f1ea; border:1px solid #cfe3d5; color:#2b6b3d; border-radius:14px; padding:14px 16px; font-size:13.5px; margin-bottom:18px;}

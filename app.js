@@ -1,13 +1,15 @@
 /* =========================================================================
    DAWN VOCAB DAILY — a fully client-side vocabulary learning app
    No backend, no server costs. You bring your own AI API key
-   (OpenAI, Gemini, or Grok/xAI) and it runs entirely in your browser.
+   (OpenAI, Gemini, Claude, or Grok/xAI) and it runs entirely in your browser.
 
-   Persistence: this app deliberately avoids localStorage/sessionStorage
-   (some sandboxed previews block it). Instead, use Settings → Export data
-   to save a JSON snapshot of your deck/settings, and Import data to
-   restore it next time. Keep that file safe — it also contains your API
-   key if you choose to export it.
+   Persistence: settings, deck, offline lessons, story chapters and speaking
+   history are auto-saved to this browser's localStorage (see persistState/
+   loadPersistedState below), so everything is still here next time you open
+   the app in the same browser. Settings → Export data also gives you a
+   portable JSON backup for moving to another browser/device. If storage is
+   unavailable (e.g. a locked-down environment), the app falls back to
+   in-memory state for that session and tells you so in Settings.
    ========================================================================= */
 
 /* ---------------------------- ICONS ---------------------------- */
@@ -27,6 +29,9 @@ const ICONS = {
   close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 6l12 12M18 6 6 18"/></svg>',
   refresh: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 11A8 8 0 1 0 18.5 16"/><path d="M20 5v6h-6"/></svg>',
   sparkle: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M18 6l-2.5 2.5M8.5 15.5 6 18"/></svg>',
+  trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m-9 0 1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13"/></svg>',
+  clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>',
+  edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20h4L18.5 9.5a2.1 2.1 0 0 0-3-3L5 17v3Z"/></svg>',
 };
 
 /* ---------------------------- PROVIDER DEFAULTS ---------------------------- */
@@ -34,7 +39,48 @@ const PROVIDER_INFO = {
   openai: { label: 'OpenAI', defaultModel: 'gpt-4o-mini', help: 'Uses the Chat Completions API. Model examples: gpt-4o-mini, gpt-4o, gpt-4.1-mini.' },
   gemini: { label: 'Gemini', defaultModel: 'gemini-2.5-flash', help: 'Uses Google AI Studio API keys. Model examples: gemini-2.5-flash, gemini-2.5-pro.' },
   grok: { label: 'Grok (xAI)', defaultModel: 'grok-4-fast', help: 'Uses the xAI Chat Completions API (OpenAI-compatible).' },
+  claude: { label: 'Claude', defaultModel: 'claude-sonnet-4-5', help: 'Uses the Anthropic Messages API with direct browser access enabled. Model examples: claude-sonnet-4-5, claude-haiku-4-5.' },
 };
+
+/* ---------------------------- PERSISTENCE (localStorage) ---------------------------- */
+const STORAGE_KEY = 'dawnVocabDaily.v1';
+let storageAvailable = true;
+try { const t = '__t__'; localStorage.setItem(t, '1'); localStorage.removeItem(t); } catch (e) { storageAvailable = false; }
+
+function persistState(){
+  if (!storageAvailable) return;
+  try {
+    const snapshot = {
+      settings: state.settings,
+      difficulty: state.difficulty,
+      wordCount: state.wordCount,
+      deck: state.deck,
+      offlineArticles: state.offlineArticles,
+      speakingHistory: state.speakingHistory,
+      wordStory: state.wordStory,
+      savedAt: Date.now(),
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
+  } catch (e) { console.warn('Could not persist to localStorage:', e.message); }
+}
+function loadPersistedState(){
+  if (!storageAvailable) return;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return;
+    const data = JSON.parse(raw);
+    if (data.settings) Object.assign(state.settings, data.settings);
+    if (data.difficulty) state.difficulty = data.difficulty;
+    if (data.wordCount) state.wordCount = data.wordCount;
+    if (Array.isArray(data.deck)) state.deck = data.deck;
+    if (Array.isArray(data.offlineArticles)) state.offlineArticles = data.offlineArticles;
+    if (Array.isArray(data.speakingHistory)) state.speakingHistory = data.speakingHistory;
+    if (data.wordStory) state.wordStory = data.wordStory;
+  } catch (e) { console.warn('Could not read saved data:', e.message); }
+}
+// Debounced auto-save so rapid state changes (typing, etc.) don't hammer localStorage.
+let persistTimer = null;
+function schedulePersist(){ clearTimeout(persistTimer); persistTimer = setTimeout(persistState, 250); }
 
 const CATEGORY_FEEDS = {
   top: 'https://www.dawn.com/feeds/home',
@@ -48,7 +94,8 @@ const CATEGORY_LABELS = { top: 'Top', pakistan: 'Pakistan', world: 'World', busi
 
 /* ---------------------------- STATE ---------------------------- */
 const state = {
-  settings: { provider: 'openai', apiKey: '', model: '', customEndpoint: '' },
+  settings: { provider: 'openai', apiKey: '', model: '', customEndpoint: '', tavilyKey: '', extraKeys: [] },
+  wordStory: { chapters: [], usedWords: [], loading: false, showUrdu: false, urduWhole: null, urduLoading: false },
   difficulty: 'Advanced',
   wordCount: 10,
   category: 'top',
@@ -74,6 +121,8 @@ const state = {
   lastSpeakResult: null,
   flashIndex: 0,
   flashFlipped: false,
+  deckIndex: 0,
+  deckFlipped: false,
   memory: null,
   reviewIndex: 0,
   reviewShowBack: false,
@@ -84,6 +133,11 @@ const state = {
 };
 
 function uid(){ return Math.random().toString(36).slice(2, 10); }
+function formatDatePill(dateLike){
+  const d = new Date(dateLike);
+  if (isNaN(d)) return '';
+  return d.toLocaleDateString('en-US', { weekday:'short', day:'numeric', month:'short', year:'numeric' }).toUpperCase();
+}
 function now(){ return Date.now(); }
 function stripHtml(html){ const d = document.createElement('div'); d.innerHTML = html || ''; return (d.textContent || '').replace(/\s+/g,' ').trim(); }
 function escapeHtml(s){ return (s==null?'':String(s)).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -126,6 +180,27 @@ async function callAI(systemPrompt, userPrompt, opts = {}) {
     if (!res.ok) { const t = await safeText(res); throw new Error(`AI request failed (${res.status}): ${t.slice(0,220)}`); }
     const data = await res.json();
     return data.choices?.[0]?.message?.content ?? '';
+  }
+
+  if (provider === 'claude') {
+    const mdl = model || PROVIDER_INFO.claude.defaultModel;
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify({
+        model: mdl, max_tokens: 1536,
+        system: systemPrompt + (opts.json ? '\n\nRespond ONLY with valid JSON. No markdown code fences, no commentary before or after.' : ''),
+        messages: [ { role: 'user', content: userPrompt } ],
+      }),
+    });
+    if (!res.ok) { const t = await safeText(res); throw new Error(`AI request failed (${res.status}): ${t.slice(0,220)}`); }
+    const data = await res.json();
+    return (data.content || []).map(p => p.text || '').join('');
   }
 
   if (provider === 'gemini') {
@@ -188,6 +263,34 @@ async function generateImageForWord(word, meaning){
   return null; // caller shows a designed placeholder instead
 }
 
+/* ---------------------------- TAVILY (optional search/extract key) ---------------------------- */
+function hasTavily(){ return !!(state.settings.tavilyKey && state.settings.tavilyKey.trim()); }
+
+async function tavilySearch(query){
+  const res = await fetch('https://api.tavily.com/search', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ api_key: state.settings.tavilyKey, query, include_domains: ['dawn.com'], max_results: 10 }),
+  });
+  if (!res.ok) throw new Error('Tavily search failed (' + res.status + ')');
+  const data = await res.json();
+  return (data.results || []).map(r => ({
+    title: r.title || '', link: r.url, snippet: (r.content || '').slice(0, 220),
+    content: r.content || '', pubDate: r.published_date || null, source: 'search',
+  }));
+}
+async function tavilyExtract(url){
+  try {
+    const res = await fetch('https://api.tavily.com/extract', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_key: state.settings.tavilyKey, urls: [url] }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const item = (data.results || [])[0];
+    return item?.raw_content || null;
+  } catch (e) { return null; }
+}
+
 /* ---------------------------- ARTICLE FETCHING ---------------------------- */
 async function rss2json(feedUrl){
   const api = 'https://api.rss2json.com/v1/api.json?rss_url=' + encodeURIComponent(feedUrl);
@@ -206,11 +309,16 @@ async function fetchArticles(category){
     snippet: stripHtml(it.description || it.content || '').slice(0, 220),
     content: stripHtml(it.content || it.description || ''),
     pubDate: it.pubDate,
+    thumbnail: it.thumbnail || it.enclosure?.link || null,
     source: 'feed',
   }));
 }
 
 async function searchArticles(query){
+  if (hasTavily()) {
+    try { return await tavilySearch(query); }
+    catch (e) { console.warn('Tavily search failed, falling back to RSS:', e.message); }
+  }
   const gnews = `https://news.google.com/rss/search?q=${encodeURIComponent(query + ' site:dawn.com')}&hl=en-PK&gl=PK&ceid=PK:en`;
   const items = await rss2json(gnews);
   return items.slice(0, 12).map(it => ({
@@ -219,11 +327,16 @@ async function searchArticles(query){
     snippet: stripHtml(it.description || '').slice(0, 220),
     content: stripHtml(it.description || ''),
     pubDate: it.pubDate,
+    thumbnail: it.thumbnail || null,
     source: 'search',
   }));
 }
 
 async function fetchFullArticleText(url){
+  if (hasTavily()) {
+    const viaTavily = await tavilyExtract(url);
+    if (viaTavily && viaTavily.length > 200) return viaTavily;
+  }
   try {
     const proxy = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url);
     const res = await fetch(proxy);
@@ -259,7 +372,12 @@ Return a JSON array (top-level array, no wrapper object). Each item must have ex
 - "difficulty": one of "Easy", "Medium", "Hard"
 - "meaningUrdu": the meaning written in Urdu script (a few Urdu synonyms separated by commas is ideal)
 - "meaningEnglish": a concise one-sentence English definition
+- "articleQuote": the exact sentence from the article that contains the word
 - "example": ONE new example sentence using the word, different from how it's used in the article
+- "exampleUrdu": an Urdu translation of that example sentence
+- "synonyms": an array of 2-3 English synonyms
+- "antonyms": an array of 1-2 English antonyms (empty array if none make sense)
+- "mnemonic": a short one-sentence memory trick for the word (word-parts, sound-alike, or vivid association)
 
 Article:
 """${articleText.slice(0, 6000)}"""`;
@@ -302,6 +420,74 @@ Return a JSON array where each item has: {"word":"...","question":"...","options
 Vary which option index is correct. Keep questions short.`;
   const parsed = await callAIJSON(sys, usr);
   return Array.isArray(parsed) ? parsed : (parsed.questions || []);
+}
+
+/* ---------------------------- WORD STORY (persistent, built from saved deck) ---------------------------- */
+function todayStr(){ return new Date().toISOString().slice(0, 10); }
+
+async function generateStoryChapter(words, prevTitles, chapterNum){
+  const sys = `You write engaging, connected short-story chapters for English learners that weave in a vocabulary list. Respond with strictly valid JSON only, no markdown fences.`;
+  const usr = `Write chapter ${chapterNum} of an ongoing story${prevTitles ? ` (previous chapter titles, for tone/continuity only — don't repeat their plot: ${prevTitles})` : ' — this is the first chapter'}. It must naturally use ALL of these words at least once: ${words.join(', ')}.
+Wrap every occurrence of each target word in double asterisks, e.g. **word**. Aim for 160-260 words.
+Return JSON: {"title": "a short evocative chapter title", "story": "the chapter text"}`;
+  return await callAIJSON(sys, usr);
+}
+
+async function addNewWordsToStory(){
+  if (!hasKey()) { toast('Add an API key in Settings first.'); return; }
+  const used = new Set(state.wordStory.usedWords || []);
+  const newWords = state.deck.filter(d => !used.has(d.word.toLowerCase())).map(d => d.word);
+  if (!newWords.length) { toast('No new saved words waiting — save more from a lesson first.'); return; }
+  state.wordStory.loading = true; render();
+  try {
+    const prevTitles = state.wordStory.chapters.map(c => c.title).join('; ');
+    const chapterNum = state.wordStory.chapters.length + 1;
+    const result = await generateStoryChapter(newWords, prevTitles, chapterNum);
+    state.wordStory.chapters.push({ id: uid(), date: todayStr(), title: result.title || `Chapter ${chapterNum}`, text: result.story || '', words: newWords });
+    state.wordStory.usedWords = [...used, ...newWords.map(w => w.toLowerCase())];
+    state.wordStory.showUrdu = false; state.wordStory.urduWhole = null;
+  } catch (e) { toast('Could not extend the story: ' + e.message); }
+  state.wordStory.loading = false; render();
+}
+
+async function rewriteStoryFromDeck(){
+  if (!hasKey()) { toast('Add an API key in Settings first.'); return; }
+  if (!state.deck.length) { toast('Save some words first.'); return; }
+  state.wordStory.loading = true; render();
+  try {
+    const allWords = state.deck.map(d => d.word);
+    const result = await generateStoryChapter(allWords, '', 1);
+    state.wordStory.chapters = [{ id: uid(), date: todayStr(), title: result.title || 'Chapter 1', text: result.story || '', words: allWords }];
+    state.wordStory.usedWords = allWords.map(w => w.toLowerCase());
+    state.wordStory.showUrdu = false; state.wordStory.urduWhole = null;
+  } catch (e) { toast('Could not rewrite the story: ' + e.message); }
+  state.wordStory.loading = false; render();
+}
+
+function deleteChapter(id){
+  state.wordStory.chapters = state.wordStory.chapters.filter(c => c.id !== id);
+  render();
+}
+
+async function toggleStoryUrdu(){
+  state.wordStory.showUrdu = !state.wordStory.showUrdu;
+  if (state.wordStory.showUrdu && !state.wordStory.urduWhole) {
+    if (!hasKey()) { toast('Add an API key in Settings first.'); state.wordStory.showUrdu = false; render(); return; }
+    state.wordStory.urduLoading = true; render();
+    try {
+      const combined = state.wordStory.chapters.map(c => c.text.replace(/\*\*/g, '')).join('\n\n');
+      const sys = `You translate English text into natural, fluent Urdu for language learners. Respond with strictly valid JSON only, no markdown fences.`;
+      const usr = `Translate this into Urdu:\n"""${combined.slice(0, 6000)}"""\nReturn JSON: {"urdu": "..."}`;
+      const parsed = await callAIJSON(sys, usr);
+      state.wordStory.urduWhole = parsed.urdu || '';
+    } catch (e) { toast('Translation failed: ' + e.message); state.wordStory.showUrdu = false; }
+    state.wordStory.urduLoading = false;
+  }
+  render();
+}
+function speakChapter(id){
+  const c = state.wordStory.chapters.find(x => x.id === id);
+  if (c) speak(c.text.replace(/\*\*/g, ''));
 }
 
 /* ---------------------------- SPEECH ---------------------------- */
@@ -359,15 +545,14 @@ function isWordSaved(word){ return state.deck.some(d => d.word.toLowerCase() ===
 
 function saveWordToDeck(w){
   if (isWordSaved(w.word)) return;
-  state.deck.unshift({
-    word: w.word, partOfSpeech: w.partOfSpeech, ipa: w.ipa, difficulty: w.difficulty,
-    meaningUrdu: w.meaningUrdu, meaningEnglish: w.meaningEnglish, example: w.example,
-    savedAt: now(), box: 1, nextReviewAt: now(),
-  });
+  state.deck.unshift({ ...w, savedAt: now(), box: 1, nextReviewAt: now() });
   toast(`Saved "${w.word}" to your deck`);
+  schedulePersist();
 }
 function removeWordFromDeck(word){
   state.deck = state.deck.filter(d => d.word.toLowerCase() !== word.toLowerCase());
+  if (state.deckIndex >= state.deck.length) state.deckIndex = Math.max(0, state.deck.length - 1);
+  state.deckFlipped = false;
   render();
 }
 function toggleSaveWord(w){
@@ -402,6 +587,8 @@ function saveArticleOffline(){
     state.offlineArticles.unshift({
       id: uid(), title: a.title, link: a.link, content: a.content,
       words: state.currentWords, story: state.story.text, summary: state.summary.text,
+      snippet: (a.content || '').slice(0, 180),
+      difficulty: state.difficulty, wordCount: (state.currentWords || []).length || state.wordCount,
       savedAt: now(),
     });
     toast('Saved offline');
@@ -423,7 +610,7 @@ function openOfflineArticle(id){
 
 /* ---------------------------- EXPORT / IMPORT ---------------------------- */
 function exportData(){
-  const data = { settings: state.settings, deck: state.deck, offlineArticles: state.offlineArticles, speakingHistory: state.speakingHistory, exportedAt: now() };
+  const data = { settings: state.settings, deck: state.deck, offlineArticles: state.offlineArticles, speakingHistory: state.speakingHistory, wordStory: state.wordStory, exportedAt: now() };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -441,6 +628,7 @@ function importData(file){
       if (Array.isArray(data.deck)) state.deck = data.deck;
       if (Array.isArray(data.offlineArticles)) state.offlineArticles = data.offlineArticles;
       if (Array.isArray(data.speakingHistory)) state.speakingHistory = data.speakingHistory;
+      if (data.wordStory) state.wordStory = data.wordStory;
       toast('Backup restored');
       render();
     } catch (e) { toast('That file could not be read.'); }
@@ -639,11 +827,14 @@ function renderHome(){
     articleList = `<div class="empty-state"><div class="big-emoji">📰</div>No articles yet — hit refresh.</div>`;
   } else {
     articleList = state.articles.map((a, i) => `
-      <div class="article-card" data-act="openArticle" data-arg="${i}">
-        <div class="article-kicker">${a.source==='search'?'Search result':'Fresh from Dawn'}</div>
-        <div class="article-title">${esc(a.title)}</div>
-        ${a.snippet ? `<div class="article-snippet">${esc(a.snippet)}</div>` : ''}
-        <div class="article-meta">${a.pubDate ? new Date(a.pubDate).toLocaleDateString(undefined,{month:'short',day:'numeric'}) : ''}</div>
+      <div class="lesson-card">
+        ${a.thumbnail ? `<img class="lesson-card-img" src="${esc(a.thumbnail)}" alt="" loading="lazy">` : ''}
+        <div class="lesson-card-body">
+          <div class="date-pill">${ICONS.clock} ${esc(formatDatePill(a.pubDate) || (a.source==='search'?'Search result':'Fresh from Dawn'))}</div>
+          <div class="lesson-headline">${esc(a.title)}</div>
+          ${a.snippet ? `<div class="lesson-snippet">${esc(a.snippet)}</div>` : ''}
+          <button class="btn-learn" data-act="openArticle" data-arg="${i}">${ICONS.sparkle} Learn words</button>
+        </div>
       </div>`).join('');
   }
 
@@ -665,7 +856,7 @@ function renderHome(){
       <div class="nav-pill" data-act="setView" data-arg="review">${ICONS.brain} Review ${dueCount ? `<span class="badge">${dueCount}</span>`:''}</div>
       <div class="nav-pill" data-act="setView" data-arg="dashboard">${ICONS.bar} Dashboard</div>
       <div class="nav-pill" data-act="setView" data-arg="deck">${ICONS.layers} My deck <span class="badge">${state.deck.length}</span></div>
-      <div class="nav-pill" data-act="openManualPrompt">${ICONS.book} Word story</div>
+      <div class="nav-pill" data-act="setView" data-arg="wordstory">${ICONS.book} Word story</div>
       <div class="nav-pill" data-act="setView" data-arg="speaking">${ICONS.mic} Speaking history</div>
       <div class="nav-pill" data-act="setView" data-arg="offline">${ICONS.download} Offline <span class="badge">${state.offlineArticles.length}</span></div>
     </div>
@@ -734,31 +925,73 @@ function renderWordList(){
   }).join('');
 }
 
+function renderProgressDots(current, total){
+  if (!total) return '';
+  let segs = '';
+  for (let i = 0; i < total; i++) {
+    const cls = i < current ? 'done' : i === current ? 'now' : '';
+    segs += `<div class="dot-seg ${cls}"></div>`;
+  }
+  return `<div class="progress-dots">${segs}</div>`;
+}
+
+function renderRichCardContent(w, flipped){
+  if (!flipped) {
+    return `
+      <span class="tag ${tagClass(w.difficulty)}">${esc((w.partOfSpeech || w.difficulty || '').toUpperCase())}</span>
+      <div class="rc-word">${esc(w.word)}</div>
+      <div class="rc-ipa">/${esc(w.ipa||'')}/</div>
+      <div class="rc-urdu">${esc(w.meaningUrdu||'')}</div>
+      <button class="pill-audio" data-act="speakWord" data-arg="${esc(w.word)}">${ICONS.speaker} Pronounce</button>
+    `;
+  }
+  const synonyms = (w.synonyms || []).join(', ');
+  const antonyms = (w.antonyms || []).join(', ');
+  return `
+    <div class="rc-section">
+      <div class="rc-label">Meaning</div>
+      <div class="rc-meaning">${esc(w.meaningEnglish||'')}</div>
+    </div>
+    ${w.articleQuote ? `
+    <div class="rc-section">
+      <div class="rc-label">In today's article</div>
+      <div class="rc-quote">"${esc(w.articleQuote)}"</div>
+    </div>` : ''}
+    <div class="rc-section">
+      <div class="rc-label">Example</div>
+      <div class="rc-example-en">${esc(w.example||'')}</div>
+      ${w.exampleUrdu ? `<div class="rc-example-ur">${esc(w.exampleUrdu)}</div>` : ''}
+      <button class="pill-audio" data-act="speakWord" data-arg="${esc(w.example||w.word)}">${ICONS.speaker} Hear example</button>
+    </div>
+    ${synonyms ? `
+    <div class="rc-section">
+      <div class="rc-label">Synonyms</div>
+      <div class="rc-meaning">${esc(synonyms)}</div>
+    </div>` : ''}
+    ${antonyms ? `
+    <div class="rc-section">
+      <div class="rc-label">Antonyms</div>
+      <div class="rc-meaning">${esc(antonyms)}</div>
+    </div>` : ''}
+    ${w.mnemonic ? `<div class="mnemonic-box">💡 ${esc(w.mnemonic)}</div>` : ''}
+  `;
+}
+
 function renderFlashcards(){
   if (state.wordsLoading) return `<div class="loading-row"><div class="spinner"></div> Preparing flashcards…</div>`;
   if (!state.currentWords?.length) return `<div class="empty-state">Generate word list first.</div>`;
   const i = Math.min(state.flashIndex, state.currentWords.length - 1);
   const w = state.currentWords[i];
+  const saved = isWordSaved(w.word);
   return `
-    <div class="flash-wrap">
-      <div class="flashcard ${state.flashFlipped?'flipped':''}" data-act="flipFlash">
-        <div class="flashcard-inner">
-          <div class="flashcard-face front">
-            <div class="fc-word">${esc(w.word)}</div>
-            <div class="fc-pos">${esc(w.partOfSpeech||'')} · /${esc(w.ipa||'')}/</div>
-          </div>
-          <div class="flashcard-face back">
-            <div class="fc-urdu">${esc(w.meaningUrdu||'')}</div>
-            <div class="fc-def">${esc(w.meaningEnglish||'')}</div>
-          </div>
-        </div>
-      </div>
-      <div class="flash-controls">
-        <button class="btn btn-outline btn-sm" data-act="flashPrev">← Prev</button>
-        <div class="flash-progress">${i+1} / ${state.currentWords.length}</div>
-        <button class="btn btn-outline btn-sm" data-act="flashNext">Next →</button>
-      </div>
-      <button class="btn btn-ghost btn-sm" data-act="flashShuffle">Shuffle</button>
+    <div class="flash-progress">Card ${i+1} of ${state.currentWords.length}</div>
+    ${renderProgressDots(i, state.currentWords.length)}
+    <div class="rich-card">${renderRichCardContent(w, state.flashFlipped)}</div>
+    <div class="flash-controls-v2">
+      <button class="btn btn-outline" data-act="flashPrev">← Prev</button>
+      <button class="btn btn-outline" data-act="flipFlash">↻ Flip</button>
+      <button class="btn ${saved?'btn-dark':'btn-outline'}" data-act="toggleSaveWordUI" data-arg="${esc(w.word)}">${saved?'☑ Saved':'☆ Save'}</button>
+      <button class="btn btn-outline" data-act="flashNext">Next →</button>
     </div>`;
 }
 
@@ -929,6 +1162,7 @@ function renderArticleView(){
   const tabs = TABS.map(([key,label]) => `<button class="tab-btn ${state.currentTab===key?'active':''}" data-act="setTab" data-arg="${key}">${label}</button>`).join('');
   return `
     <button class="back-btn" data-act="backHome">${ICONS.back} Back to articles</button>
+    <div class="eyebrow">TODAY'S LESSON · ${esc((state.difficulty||'').toUpperCase())}</div>
     <h1 class="detail-title">${esc(a.title)}</h1>
     ${a.link ? `<div class="detail-linkrow"><a href="${esc(a.link)}" target="_blank" rel="noopener">Read the full article on Dawn →</a></div>` : ''}
     ${a.link ? `<button class="save-toggle ${saved?'saved':''}" data-act="saveArticleOffline">${saved?'✓ Saved offline':ICONS.download+' Save offline'}</button>` : ''}
@@ -996,29 +1230,40 @@ function rateReviewUI(arg){
   render();
 }
 
-/* ---------------------------- RENDER: DECK ---------------------------- */
+/* ---------------------------- RENDER: DECK (flashcard browser) ---------------------------- */
 function renderDeck(){
   if (!state.deck.length) {
     return `<button class="back-btn" data-act="backHome">${ICONS.back} Back</button>
       <h1 class="detail-title">My deck</h1>
-      <div class="empty-state"><div class="big-emoji">🗂️</div>No saved words yet. Open an article and tap "Save" on any word.</div>`;
+      <div class="empty-state"><div class="big-emoji">🗂️</div>No saved words yet. Open a lesson and tap "Save" on any word.</div>`;
   }
-  const rows = state.deck.map(w => `
-    <div class="list-row">
-      <div class="list-row-main">
-        <div class="list-row-title">${esc(w.word)} <span class="tag ${tagClass(w.difficulty)}">${esc(w.difficulty||'')}</span></div>
-        <div class="list-row-sub">${esc(w.meaningUrdu||'')} — ${esc(w.meaningEnglish||'')}</div>
-      </div>
-      <button class="icon-link" data-act="removeWordUI" data-arg="${esc(w.word)}">Remove</button>
-    </div>`).join('');
+  const i = Math.min(state.deckIndex, state.deck.length - 1);
+  const w = state.deck[i];
   return `
     <button class="back-btn" data-act="backHome">${ICONS.back} Back</button>
-    <h1 class="detail-title">My deck (${state.deck.length})</h1>
-    <div class="panel">${rows}</div>
+    <div class="deck-head">
+      <h1 class="detail-title mb-0">Your saved words</h1>
+      <button class="danger-link" data-act="clearDeck">${ICONS.trash} Clear deck</button>
+    </div>
+    <div class="flash-progress">Card ${i+1} of ${state.deck.length}</div>
+    ${renderProgressDots(i, state.deck.length)}
+    <div class="rich-card">${renderRichCardContent(w, state.deckFlipped)}</div>
+    <div class="flash-controls-v2">
+      <button class="btn btn-outline" data-act="deckPrev">← Prev</button>
+      <button class="btn btn-outline" data-act="deckFlip">↻ Flip</button>
+      <button class="btn btn-dark" data-act="removeWordUI" data-arg="${esc(w.word)}">☑ Saved</button>
+      <button class="btn btn-outline" data-act="deckNext">Next →</button>
+    </div>
     <button class="btn btn-outline btn-block mt-20" data-act="exportData">Export deck &amp; data (JSON)</button>
   `;
 }
 function removeWordUI(word){ removeWordFromDeck(word); }
+function clearDeck(){
+  if (!state.deck.length) return;
+  if (!confirm(`Remove all ${state.deck.length} saved words? This can't be undone (unless you have an exported backup).`)) return;
+  state.deck = []; state.deckIndex = 0; state.deckFlipped = false;
+  render();
+}
 
 /* ---------------------------- RENDER: SPEAKING ---------------------------- */
 function renderSpeaking(){
@@ -1056,20 +1301,76 @@ function renderSpeaking(){
 
 /* ---------------------------- RENDER: OFFLINE ---------------------------- */
 function renderOffline(){
+  const intro = `<div class="hint-text">Article paragraphs, words, story and summary saved on this device — open them any time, even without internet.</div>`;
   if (!state.offlineArticles.length) {
     return `<button class="back-btn" data-act="backHome">${ICONS.back} Back</button>
-      <h1 class="detail-title">Offline</h1>
-      <div class="empty-state"><div class="big-emoji">📥</div>No articles saved offline yet.</div>`;
+      <h1 class="detail-title">Saved for offline learning</h1>
+      ${intro}
+      <div class="empty-state"><div class="big-emoji">📥</div>No lessons saved offline yet.</div>`;
   }
   const rows = state.offlineArticles.map(a => `
-    <div class="article-card" data-act="openOfflineArticle" data-arg="${a.id}">
-      <div class="article-title">${esc(a.title)}</div>
-      <div class="article-meta">${a.words?.length||0} words · saved ${new Date(a.savedAt).toLocaleDateString()}</div>
+    <div class="offline-card">
+      <div class="date-pill">${ICONS.clock} ${esc(formatDatePill(a.savedAt))} · ${esc((a.difficulty||'').toUpperCase())} · ${a.wordCount||0} WORDS</div>
+      <div class="lesson-headline">${esc(a.title)}</div>
+      ${a.snippet ? `<div class="lesson-snippet">${esc(a.snippet)}</div>` : ''}
+      <div class="offline-card-actions">
+        <button class="btn btn-primary btn-sm" data-act="openOfflineArticle" data-arg="${a.id}">${ICONS.book} Open lesson</button>
+        <span class="saved-flag">${ICONS.download} SAVED</span>
+        <button class="danger-link" data-act="deleteOfflineArticleUI" data-arg="${a.id}">${ICONS.trash}</button>
+      </div>
     </div>`).join('');
   return `
     <button class="back-btn" data-act="backHome">${ICONS.back} Back</button>
-    <h1 class="detail-title">Offline (${state.offlineArticles.length})</h1>
+    <h1 class="detail-title">Saved for offline learning</h1>
+    ${intro}
+    <div class="deck-head"><div class="card-label mb-0">${state.offlineArticles.length} lesson${state.offlineArticles.length===1?'':'s'} available offline</div><button class="danger-link" data-act="clearOffline">${ICONS.trash} Clear all</button></div>
     ${rows}`;
+}
+function deleteOfflineArticle(id){ state.offlineArticles = state.offlineArticles.filter(a => a.id !== id); render(); }
+function clearOffline(){
+  if (!state.offlineArticles.length) return;
+  if (!confirm('Remove all offline lessons?')) return;
+  state.offlineArticles = []; render();
+}
+
+/* ---------------------------- RENDER: WORD STORY ---------------------------- */
+function renderWordStory(){
+  const ws = state.wordStory;
+  const usedSet = new Set(ws.usedWords || []);
+  const newWaiting = state.deck.filter(d => !usedSet.has(d.word.toLowerCase())).length;
+  const wordBank = [...new Set(ws.chapters.flatMap(c => c.words))];
+  return `
+    <button class="back-btn" data-act="backHome">${ICONS.back} Back</button>
+    <h1 class="detail-title">Word story</h1>
+    <div class="story-hero">
+      <div class="story-hero-title">${ICONS.book} Your never-forget story</div>
+      <div class="story-hero-stats">${state.deck.length} saved words · ${ws.chapters.length} chapter${ws.chapters.length===1?'':'s'} · ${newWaiting} new word${newWaiting===1?'':'s'} waiting</div>
+      <div class="row-gap">
+        <button class="btn btn-primary" data-act="addStoryWords" ${ws.loading?'disabled':''}>${ICONS.edit} ${ws.loading?'Writing…':'Add new words'}</button>
+        <button class="btn btn-outline" data-act="rewriteStoryUI" ${ws.loading?'disabled':''}>${ICONS.sparkle} Rewrite story</button>
+      </div>
+    </div>
+    ${!ws.chapters.length ? `<div class="empty-state"><div class="big-emoji">📖</div>Save some words from a lesson, then tap "Add new words" to start your story.</div>` : ''}
+    ${ws.chapters.map((c, i) => `
+      <div class="chapter-card">
+        <div class="chapter-head">
+          <div>
+            <div class="chapter-meta">Chapter ${i+1} · ${esc(c.date)}</div>
+            <div class="chapter-title">${esc(c.title)}</div>
+          </div>
+          <div class="chapter-actions">
+            <button class="icon-round" data-act="speakChapterUI" data-arg="${c.id}">${ICONS.speaker}</button>
+            <button class="icon-round danger" data-act="deleteChapterUI" data-arg="${c.id}">${ICONS.trash}</button>
+          </div>
+        </div>
+        <div class="reading-text">${mdBoldToHighlight(c.text)}</div>
+      </div>`).join('')}
+    ${wordBank.length ? `
+      <div class="story-wordbank">${wordBank.map(w => `<span class="chip">${esc(w)}</span>`).join('')}</div>
+      <button class="urdu-toggle" data-act="toggleStoryUrduUI">${ws.showUrdu ? 'Hide' : 'Show'} Urdu translation</button>
+      ${ws.showUrdu ? (ws.urduLoading ? `<div class="loading-row"><div class="spinner"></div> Translating…</div>` : `<div class="urdu-block">${esc(ws.urduWhole || '')}</div>`) : ''}
+    ` : ''}
+  `;
 }
 
 /* ---------------------------- RENDER: SETTINGS ---------------------------- */
@@ -1078,10 +1379,18 @@ function renderSettings(){
   const cards = providers.map(p => `<div class="provider-card ${state.settings.provider===p?'selected':''}" data-act="setProvider" data-arg="${p}">${PROVIDER_INFO[p].label}</div>`).join('')
     + `<div class="provider-card ${state.settings.provider==='custom'?'selected':''}" data-act="setProvider" data-arg="custom">Custom</div>`;
   const info = PROVIDER_INFO[state.settings.provider];
+  const extraRows = (state.settings.extraKeys || []).map((k, i) => `
+    <div class="key-row">
+      <input type="text" placeholder="Label (e.g. Tavily, Pexels…)" data-extra-key-idx="${i}" data-extra-field="label" value="${esc(k.label)}">
+      <input type="password" placeholder="Key" data-extra-key-idx="${i}" data-extra-field="key" value="${esc(k.key)}">
+      <button class="icon-link" data-act="removeExtraKey" data-arg="${i}">Remove</button>
+    </div>`).join('');
   return `
     <button class="back-btn" data-act="backHome">${ICONS.back} Back</button>
     <h1 class="detail-title">Settings</h1>
-    <div class="hint-text">Bring your own API key. It's kept only in this browser tab's memory — never sent anywhere except directly to the provider you pick below. Nothing here costs you anything beyond your own provider usage.</div>
+
+    ${storageAvailable ? `<div class="persist-note">${ICONS.download} Your keys, deck, offline lessons and settings are saved automatically in this browser — no need to re-enter them next time you open the app here.</div>`
+      : `<div class="status-banner status-info">This browser is blocking local storage, so your keys won't be remembered between visits here — use Export/Import below instead.</div>`}
 
     <div class="card-label mt-20">AI PROVIDER</div>
     <div class="provider-grid">${cards}</div>
@@ -1107,13 +1416,27 @@ function renderSettings(){
     <div id="testResult"></div>
 
     <hr class="divider">
+    <div class="card-label">SEARCH (OPTIONAL)</div>
+    <div class="field">
+      <label>Tavily API key</label>
+      <input type="password" id="tavilyKeyInput" placeholder="tvly-..." value="${esc(state.settings.tavilyKey)}">
+      <div class="help">If set, Tavily is used for article search and full-text extraction instead of the free RSS relay — usually faster and more reliable. Get a key at tavily.com.</div>
+    </div>
+
+    <hr class="divider">
+    <div class="card-label">OTHER API KEYS</div>
+    <div class="hint-text">Store any other keys you have here for your own future reference — they're saved with everything else but aren't wired into a feature yet.</div>
+    <div id="extraKeysList">${extraRows}</div>
+    <button class="btn btn-outline btn-sm" data-act="addExtraKey">+ Add a key</button>
+
+    <hr class="divider">
     <div class="card-label">DATA</div>
     <div class="row-gap">
       <button class="btn btn-outline" data-act="exportData">${ICONS.download} Export data</button>
       <button class="btn btn-outline" data-act="triggerImport">Import data</button>
       <input type="file" id="importFile" accept="application/json" style="display:none">
     </div>
-    <div class="footnote">Export downloads a JSON file with your settings, saved deck, offline articles and speaking history so you can bring them back next time — this app doesn't use browser storage.</div>
+    <div class="footnote">Export downloads a JSON file with your settings, saved deck, offline lessons, story chapters and speaking history — handy for moving to another browser or device, or as a manual backup.</div>
   `;
 }
 async function testConnection(){
@@ -1139,11 +1462,13 @@ function render(){
     case 'deck': html = renderDeck(); break;
     case 'speaking': html = renderSpeaking(); break;
     case 'offline': html = renderOffline(); break;
+    case 'wordstory': html = renderWordStory(); break;
     case 'settings': html = renderSettings(); break;
     default: html = renderHome();
   }
   app.innerHTML = html;
   renderToast();
+  schedulePersist();
 }
 
 /* ---------------------------- ACTIONS ---------------------------- */
@@ -1167,6 +1492,10 @@ const actions = {
   flashPrev: () => { state.flashIndex = Math.max(0, state.flashIndex-1); state.flashFlipped=false; render(); },
   flashNext: () => { state.flashIndex = Math.min(state.currentWords.length-1, state.flashIndex+1); state.flashFlipped=false; render(); },
   flashShuffle: () => { state.currentWords = [...state.currentWords].sort(()=>Math.random()-.5); state.flashIndex=0; state.flashFlipped=false; render(); },
+  deckPrev: () => { state.deckIndex = Math.max(0, state.deckIndex-1); state.deckFlipped=false; render(); },
+  deckNext: () => { state.deckIndex = Math.min(state.deck.length-1, state.deckIndex+1); state.deckFlipped=false; render(); },
+  deckFlip: () => { state.deckFlipped = !state.deckFlipped; render(); },
+  clearDeck: () => clearDeck(),
   generateAllPictures: () => generateAllPictures(),
   memoryTileClick: (arg) => memoryTileClick(arg),
   resetMemory: () => { setupMemoryGame(); render(); },
@@ -1189,10 +1518,19 @@ const actions = {
   setSpeakTarget: (arg) => { state.lastSpeakTarget = arg; state.lastSpeakResult = null; render(); },
   recordSpeak: (arg) => startSpeakingPractice(arg),
   openOfflineArticle: (arg) => openOfflineArticle(arg),
+  deleteOfflineArticleUI: (arg) => deleteOfflineArticle(arg),
+  clearOffline: () => clearOffline(),
   setProvider: (arg) => { state.settings.provider = arg; render(); },
   testConnection: () => testConnection(),
   exportData: () => exportData(),
   triggerImport: () => document.getElementById('importFile').click(),
+  addStoryWords: () => addNewWordsToStory(),
+  rewriteStoryUI: () => rewriteStoryFromDeck(),
+  deleteChapterUI: (arg) => deleteChapter(arg),
+  speakChapterUI: (arg) => speakChapter(arg),
+  toggleStoryUrduUI: () => toggleStoryUrdu(),
+  addExtraKey: () => { state.settings.extraKeys = state.settings.extraKeys || []; state.settings.extraKeys.push({ label: '', key: '' }); render(); },
+  removeExtraKey: (arg) => { state.settings.extraKeys.splice(parseInt(arg,10), 1); render(); },
   saveLookupWord: () => {
     const d = state.lookupPopover?.data;
     if (!d) return;
@@ -1218,9 +1556,16 @@ document.addEventListener('input', (e) => {
     if (val) val.textContent = state.wordCount;
   }
   if (e.target.id === 'searchInput') state.searchBoxValue = e.target.value;
-  if (e.target.id === 'apiKeyInput') state.settings.apiKey = e.target.value;
-  if (e.target.id === 'modelInput') state.settings.model = e.target.value;
-  if (e.target.id === 'customEndpointInput') state.settings.customEndpoint = e.target.value;
+  if (e.target.id === 'apiKeyInput') { state.settings.apiKey = e.target.value; schedulePersist(); }
+  if (e.target.id === 'modelInput') { state.settings.model = e.target.value; schedulePersist(); }
+  if (e.target.id === 'customEndpointInput') { state.settings.customEndpoint = e.target.value; schedulePersist(); }
+  if (e.target.id === 'tavilyKeyInput') { state.settings.tavilyKey = e.target.value; schedulePersist(); }
+  if (e.target.dataset.extraKeyIdx != null && e.target.dataset.extraField) {
+    const idx = parseInt(e.target.dataset.extraKeyIdx, 10);
+    const item = state.settings.extraKeys[idx];
+    if (item) { item[e.target.dataset.extraField] = e.target.value; schedulePersist(); }
+  }
+  if (e.target.id === 'wordCountSlider') schedulePersist();
 });
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && e.target.id === 'searchInput') runSearch();
@@ -1256,5 +1601,6 @@ function submitManualModal(){
 Object.assign(actions, { closeManualModal, submitManualModal });
 
 /* ---------------------------- INIT ---------------------------- */
+loadPersistedState();
 render();
 loadArticles();

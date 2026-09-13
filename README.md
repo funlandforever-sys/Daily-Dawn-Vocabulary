@@ -34,19 +34,25 @@ python3 -m http.server 8080
 
 Open the app → tap the gear icon (top right) → **Settings**:
 
-1. Pick a provider: **OpenAI**, **Gemini**, or **Grok (xAI)**.
+1. Pick a provider: **OpenAI**, **Gemini**, **Claude**, or **Grok (xAI)** —
+   or **Custom** for any other OpenAI-compatible `/chat/completions` endpoint.
 2. Paste your API key (get one from platform.openai.com, aistudio.google.com,
-   or console.x.ai).
+   console.anthropic.com, or console.x.ai).
 3. Optionally override the model name (defaults are filled in as
    placeholders — check your provider's docs for current model names/pricing,
    since these change over time).
 4. Tap **Test connection**.
+5. Optionally add a **Tavily** API key (tavily.com) just below — if set, it's
+   used for article search and full-article-text extraction instead of the
+   free RSS relay, which is generally faster and more reliable.
+6. **Other API keys**: a free-form list at the bottom of Settings where you
+   can store any other keys you pick up (a search API, an image API, etc.)
+   for your own reference — they're saved with everything else even though
+   the app doesn't call them yet.
 
-The key lives only in the page's memory for that browser tab — it is never
-sent anywhere except straight to the provider's API. It is **not** saved to
-disk automatically (see "Saving your progress" below), so you'll re-enter it
-(or import a backup) each time you open the app fresh, unless you wire up
-your own persistence (see "Optional: make the key persist" below).
+The key is sent only straight to the provider's API from your browser —
+never anywhere else. It's also **saved automatically** in this browser
+(see "Saving your progress" below), so you only enter it once per browser.
 
 ## 3. Deploy it for free, permanently
 
@@ -58,22 +64,15 @@ Any static host works, e.g.:
 
 No build step, no server, no database required.
 
-## Saving your progress (deck, offline articles, speaking history)
+## Saving your progress (deck, offline lessons, story, speaking history)
 
-This build intentionally avoids `localStorage`/browser storage so it also
-works inside sandboxed previews. Instead, use **Settings → Export data** to
-download a JSON backup, and **Import data** to restore it later. Your saved
-words, offline articles, and settings all round-trip through that file.
-
-### Optional: make the key/progress persist automatically
-
-If you're hosting this yourself and want it to remember your key and deck
-between visits without exporting/importing, it's a small change: in
-`app.js`, wrap the relevant `state` reads/writes with `localStorage`
-(`localStorage.setItem('dawnvocab', JSON.stringify(state))` on every change,
-and `JSON.parse(localStorage.getItem('dawnvocab'))` on load). This was left
-out by default only because some in-browser preview sandboxes block storage
-APIs — it's safe to add once the app is running on your own domain.
+Everything (settings/keys, deck, offline lessons, story chapters, speaking
+history) auto-saves to this browser's `localStorage` as you use the app —
+close the tab, come back later, and it's all still there, no re-entering
+your key. If a browser/environment blocks local storage, Settings tells you
+plainly and the app still works for that session — use **Export data** to
+download a JSON backup and **Import data** to restore it, e.g. when moving
+to a different browser or device.
 
 ## How the pieces work
 
@@ -99,6 +98,22 @@ APIs — it's safe to add once the app is running on your own domain.
   compares what you said to the target word and scores similarity.
 - **Spaced repetition**: a simple Leitner box system (1/2/4/8/16/32-day
   intervals) drives the Review screen.
+- **Word story**: a persistent, cumulative story built only from words in
+  your deck, across sessions. "Add new words" writes a new chapter using
+  whatever's been saved since the last chapter; "Rewrite story" starts over
+  using every saved word. Vocabulary is highlighted, chapters are dated, and
+  there's a one-tap whole-story Urdu translation.
+- **My deck**: browse everything you've saved as rich flashcards (meaning,
+  article quote, bilingual example, synonyms, antonyms, a memory-trick tip)
+  with Prev/Flip/Saved/Next controls — the same card design used for a
+  lesson's own Flashcards tab.
+
+## Responsive layout
+
+The layout is mobile-first (matching the original design) but adapts at
+~700px and ~1000px wide: wider containers, multi-column nav/picture/memory
+grids, and larger type — so it's equally usable as a phone app or a desktop
+tab.
 
 ## Notes & honest limitations
 
