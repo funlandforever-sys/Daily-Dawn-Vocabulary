@@ -332,10 +332,49 @@ async function searchArticles(query){
   }));
 }
 
-async function fetchFullArticleText(url){
+/* Clean up raw markdown/HTML scraped from a page (nav bars, logos, "Subscribe"
+   prompts, other headlines, etc. that extractors often grab alongside — or
+   instead of — the actual article body). */
+function cleanExtractedText(text){
+  if (!text) return '';
+  let t = text;
+  t = t.replace(/!\[[^\]]*\]\([^)]*\)/g, '');           // markdown images ![alt](url)
+  t = t.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1');        // markdown links [label](url) -> label
+  t = t.replace(/<[^>]+>/g, ' ');                        // stray HTML tags
+  t = t.replace(/^#{1,6}\s*/gm, '');                     // markdown headings
+  t = t.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+
+  const boilerplate = [
+    /subscribe to notifications/i, /get the latest news and updates from dawn/i,
+    /^e-?paper$/i, /dawn logo/i, /^dawn$/i, /^home$/i, /^advertisement$/i,
+    /follow dawn on/i, /read comments/i, /sign up for/i, /^menu$/i, /^search$/i,
+  ];
+  return t.split('\n').map(l => l.trim())
+    .filter(l => l && !boilerplate.some(re => re.test(l)))
+    .join('\n').trim();
+}
+
+/* Guard against an extractor returning the wrong page (e.g. a site's
+   homepage instead of the specific article) — check it's long enough,
+   doesn't read like a nav/homepage dump, and actually shares vocabulary
+   with the article's own title. */
+function looksLikeRealArticle(text, title){
+  if (!text || text.length < 200) return false;
+  const lower = text.toLowerCase();
+  const junkMarkers = ['e-paper', 'subscribe to notifications', 'dawn logo', 'get the latest news and updates'];
+  if (junkMarkers.filter(m => lower.includes(m)).length >= 2) return false;
+  const titleWords = (title || '').toLowerCase().split(/\W+/).filter(w => w.length > 4);
+  if (titleWords.length && !titleWords.some(w => lower.includes(w))) return false;
+  return true;
+}
+
+async function fetchFullArticleText(url, title){
   if (hasTavily()) {
     const viaTavily = await tavilyExtract(url);
-    if (viaTavily && viaTavily.length > 200) return viaTavily;
+    if (viaTavily) {
+      const cleaned = cleanExtractedText(viaTavily);
+      if (looksLikeRealArticle(cleaned, title)) return cleaned;
+    }
   }
   try {
     const proxy = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url);
@@ -353,7 +392,8 @@ async function fetchFullArticleText(url){
       const paras = Array.from(doc.querySelectorAll('p')).map(p => p.innerText.trim()).filter(t => t.length > 40);
       text = paras.join('\n\n');
     }
-    return text || null;
+    const cleaned = cleanExtractedText(text);
+    return looksLikeRealArticle(cleaned, title) ? cleaned : null;
   } catch (e) {
     console.warn('Could not fetch full article text:', e.message);
     return null;
@@ -676,10 +716,16 @@ async function openArticle(idx){
   render();
   window.scrollTo(0,0);
 
-  // try to get the fuller article body in the background for better AI results
-  const fuller = await fetchFullArticleText(a.link);
-  if (fuller && fuller.length > (state.currentArticle.content || '').length) {
-    state.currentArticle.content = fuller;
+  // Try to get the fuller article body for better AI results — but only for
+  // direct Dawn.com links (RSS feed items). "Search" results come from a
+  // Google News redirect URL that extractors can resolve to the wrong page
+  // (e.g. Dawn's homepage) rather than the specific article, so we leave
+  // those on their RSS snippet instead of risking garbage content.
+  if (a.source === 'feed') {
+    const fuller = await fetchFullArticleText(a.link, a.title);
+    if (fuller && fuller.length > (state.currentArticle.content || '').length) {
+      state.currentArticle.content = fuller;
+    }
   }
   generateWordsForCurrentArticle();
 }
@@ -1592,7 +1638,7 @@ function openManualModal(){
 function closeManualModal(){ document.getElementById('modal-root').innerHTML = ''; }
 function submitManualModal(){
   const title = document.getElementById('manualTitle').value.trim();
-  const text = document.getElementById('manualText').value.trim();
+  const text = cleanExtractedText(document.getElementById('manualText').value.trim());
   const link = document.getElementById('manualLink').value.trim();
   if (text.length < 40) { toast('Paste a bit more article text first.'); return; }
   closeManualModal();
